@@ -3,6 +3,25 @@
 #include <SDL2/SDL.h>
 #include "configuration.h"
 #include "debug.h"
+#include <SDL2/SDL_hidapi.h>
+#include <SDL2/SDL_events.h>
+
+// #include "../SDL_internal.h"
+
+// /* Functions for audio drivers to perform runtime conversion of audio format */
+
+// #include "SDL.h"
+// #include "SDL_audio.h"
+// #include "SDL_audio_c.h"
+
+// #include "SDL_loadso.h"
+// #include "../SDL_dataqueue.h"
+// #include "SDL_cpuinfo.h"
+
+#define RESAMPLER_BITS_PER_ZERO_CROSSING    3
+#define RESAMPLER_SAMPLES_PER_ZERO_CROSSING (1 << RESAMPLER_BITS_PER_ZERO_CROSSING)
+#define RESAMPLER_FILTER_INTERP_BITS        (32 - RESAMPLER_BITS_PER_ZERO_CROSSING)
+#define RESAMPLER_FILTER_INTERP_RANGE       (1 << RESAMPLER_FILTER_INTERP_BITS)
 
 int initialized = 0;
 
@@ -13,10 +32,29 @@ void *sdl_handler = RTLD_NEXT;
 
 extern hacksdl_config_t config;
 
+static Sint32 ResamplerPadding(const Sint32 inrate, const Sint32 outrate);
+
 /*
     Original hooked function
 */
 int (*original_SDL_Init)(Uint32 flags);
+// int (*original_SDL_Delay)(Uint32 ms);
+Uint64 (*original_SDL_GetPerformanceCounter)(void);
+Uint64 (*original_SDL_GetPerformanceFrequency)(void);
+// void (*original_SDL_WaitThread)(SDL_Thread* thread, int *status);
+// int (*original_SDL_SetThreadPriority)(SDL_ThreadPriority priority);
+
+// int (*original_SDL_hid_read_timeout)(SDL_hid_device *dev, unsigned char *data, size_t length, int milliseconds);
+// int (*original_SDL_CondWaitTimeout)(SDL_cond * cond, SDL_mutex * mutex, Uint32 ms);
+// int (*original_SDL_SemWaitTimeout)(SDL_sem *sem, Uint32 timeout);
+// int (*original_SDL_WaitEventTimeout)(SDL_Event * event, int timeout);
+// int (*original_SDL_ResampleAudio)(const int chans, const int inrate, 
+//     const int outrate,
+//     const float *lpadding, const float *rpadding,
+//     const float *inbuf, const int inbuflen,
+//     float *outbuf, const int outbuflen);
+
+
 int (*original_SDL_NumJoysticks)(void);
 
 // index related functions
@@ -63,6 +101,15 @@ int setup_original_SDL_functions(){
     }
 
     original_SDL_Init = dlsym(sdl_handler, "SDL_Init");
+    // original_SDL_Delay = dlsym(sdl_handler, "SDL_Delay");
+    original_SDL_GetPerformanceCounter = dlsym(sdl_handler, "SDL_GetPerformanceCounter");
+    original_SDL_GetPerformanceFrequency = dlsym(sdl_handler, "SDL_GetPerformanceFrequency");
+    // original_SDL_hid_read_timeout = dlsym(sdl_handler, "SDL_hid_read_timeout");
+    // original_SDL_CondWaitTimeout = dlsym(sdl_handler, "SDL_CondWaitTimeout");
+    // original_SDL_SemWaitTimeout = dlsym(sdl_handler, "SDL_SemWaitTimeout");
+    // original_SDL_WaitEventTimeout = dlsym(sdl_handler, "SDL_WaitEventTimeout");
+    // original_SDL_ResampleAudio = dlsym(sdl_handler, "SDL_ResampleAudio");
+
     original_SDL_NumJoysticks = dlsym(sdl_handler, "SDL_NumJoysticks");
     original_SDL_JoystickGetDevicePlayerIndex = dlsym(sdl_handler, "SDL_JoystickGetDevicePlayerIndex");
     original_SDL_JoystickGetDeviceGUID = dlsym(sdl_handler, "SDL_JoystickGetDeviceGUID");
@@ -130,10 +177,161 @@ int SDL_Init(Uint32 flags)
 {
     initialize();
 
-    HACKSDL_debug("Hook: flags = %d", flags);
-
-    return original_SDL_Init(flags);
+    HACKSDL_info("Hook: flags = %d", flags);
+    HACKSDL_info("--");
+    // flags = SDL_INIT_AUDIO && SDL_INIT_VIDEO;
+    // HACKSDL_info("Hook: new flags-- = %d", flags);
+    int ret = original_SDL_Init(flags);
+    // HACKSDL_info(SDL_GetCurrentAudioDriver());
+    return ret;
 }
+
+// void SDL_Delay(Uint32 ms) {
+//     HACKSDL_info("SDL_Delay");
+// }
+
+// int SDL_hid_read_timeout(SDL_hid_device *dev, unsigned char *data, size_t length, int milliseconds) {
+//     HACKSDL_info("SDL_hid_read_timeout");
+//     return original_SDL_hid_read_timeout(dev, data, length, 10);
+// }
+
+// int SDL_CondWaitTimeout(SDL_cond * cond, SDL_mutex * mutex, Uint32 ms) {
+//     HACKSDL_info("SDL_CondWaitTimeout");
+//     return original_SDL_CondWaitTimeout(cond, mutex, 10);
+// }
+
+// int SDL_SemWaitTimeout(SDL_sem *sem, Uint32 timeout) {
+//     HACKSDL_info("SDL_SemWaitTimeout");
+//     return original_SDL_SemWaitTimeout(sem, 10);
+// }
+
+Uint64 SDL_GetPerformanceCounter(void) {
+    Uint64 n = original_SDL_GetPerformanceCounter();
+    HACKSDL_info("SDL_GetPerformanceCounter: %lld", n);
+    if (n>1000000000000000)
+      n = n/8300; 
+    return n;
+}
+
+Uint64 SDL_GetPerformanceFrequency(void) {
+    Uint64 n = original_SDL_GetPerformanceFrequency();
+    HACKSDL_info("SDL_GetPerformanceFrequency: %lld", n);
+    return n;
+}
+
+// void SDL_WaitThread(SDL_Thread * thread, int *status) {
+//     HACKSDL_info("SDL_WaitThread");
+//     return original_SDL_WaitThread(thread, status);
+// }
+
+// int SDL_SetThreadPriority(SDL_ThreadPriority priority) {
+//     HACKSDL_info("SDL_SetThreadPriority");
+//     return original_SDL_SetThreadPriority(priority);   
+// }
+
+
+// int SDL_WaitEventTimeout(SDL_Event * event, int timeout) {
+//     HACKSDL_info("SDL_WaitEventTimeout");
+//     return original_SDL_WaitEventTimeout(event, 10);
+// }
+
+// SDL_AudioDeviceID SDL_OpenAudioDevice(
+//     const char *device,
+//     int iscapture,
+//     const SDL_AudioSpec *desired,
+//     SDL_AudioSpec *obtained,
+//     int allowed_changes) {
+//         HACKSDL_info("SDL_OpenAudioDevice");
+
+//         return 0;
+// }
+
+// int SDL_OpenAudio(SDL_AudioSpec * desired,
+//     SDL_AudioSpec * obtained) {
+//         HACKSDL_info("SDL_OpenAudio");
+//         return 0;
+// }
+
+// static Sint32
+// ResamplerPadding(const Sint32 inrate, const Sint32 outrate)
+// {
+//     /* This function uses integer arithmetics to avoid precision loss caused
+//      * by large floating point numbers. Sint32 is needed for the large number
+//      * multiplication. The integers are assumed to be non-negative so that
+//      * division rounds by truncation. */
+//     if (inrate == outrate) {
+//         return 0;
+//     }
+//     if (inrate > outrate) {
+//         return (RESAMPLER_SAMPLES_PER_ZERO_CROSSING * inrate + outrate - 1) / outrate;
+//     }
+//     return RESAMPLER_SAMPLES_PER_ZERO_CROSSING;
+// }
+
+// static int
+// SDL_ResampleAudio(const int chans, const int inrate, const int outrate,
+//                         const float *lpadding, const float *rpadding,
+//                         const float *inbuf, const int inbuflen,
+//                         float *outbuf, const int outbuflen)
+// {
+//     HACKSDL_info("SDL_ResampleAudio");
+//     /* This function uses integer arithmetics to avoid precision loss caused
+//      * by large floating point numbers. For some operations, Sint32 or Sint64
+//      * are needed for the large number multiplications. The input integers are
+//      * assumed to be non-negative so that division rounds by truncation and
+//      * modulo is always non-negative. Note that the operator order is important
+//      * for these integer divisions. */
+//     const int paddinglen = ResamplerPadding(inrate, outrate);
+//     const int framelen = chans * (int)sizeof (float);
+//     const int inframes = inbuflen / framelen;
+//     /* outbuflen isn't total to write, it's total available. */
+//     const int wantedoutframes = ((Sint64) inframes) * outrate / inrate;
+//     const int maxoutframes = outbuflen / framelen;
+//     const int outframes = SDL_min(wantedoutframes, maxoutframes);
+//     // float *dst = outbuf;
+//     // int i, j, chan;
+
+//     // for (i = 0; i < outframes; i++) {
+//     //     const int srcindex = ((Sint64) i) * inrate / outrate;
+//     //     /* Calculating the following way avoids subtraction or modulo of large
+//     //      * floats which have low result precision.
+//     //      *   interpolation1
+//     //      * = (i / outrate * inrate) - floor(i / outrate * inrate)
+//     //      * = mod(i / outrate * inrate, 1)
+//     //      * = mod(i * inrate, outrate) / outrate */
+//     //     const int srcfraction = ((Sint64) i) * inrate % outrate;
+//     //     const float interpolation1 = ((float) srcfraction) / ((float) outrate);
+//     //     const int filterindex1 = ((Sint32) srcfraction) * RESAMPLER_SAMPLES_PER_ZERO_CROSSING / outrate;
+//     //     const float interpolation2 = 1.0f - interpolation1;
+//     //     const int filterindex2 = ((Sint32) (outrate - srcfraction)) * RESAMPLER_SAMPLES_PER_ZERO_CROSSING / outrate;
+
+//     //     for (chan = 0; chan < chans; chan++) {
+//     //         float outsample = 0.0f;
+
+//     //         /* do this twice to calculate the sample, once for the "left wing" and then same for the right. */
+//     //         for (j = 0; (filterindex1 + (j * RESAMPLER_SAMPLES_PER_ZERO_CROSSING)) < RESAMPLER_FILTER_SIZE; j++) {
+//     //             const int filt_ind = filterindex1 + j * RESAMPLER_SAMPLES_PER_ZERO_CROSSING;
+//     //             const int srcframe = srcindex - j;
+//     //             /* !!! FIXME: we can bubble this conditional out of here by doing a pre loop. */
+//     //             const float insample = (srcframe < 0) ? lpadding[((paddinglen + srcframe) * chans) + chan] : inbuf[(srcframe * chans) + chan];
+//     //             outsample += (float)(insample * (ResamplerFilter[filt_ind] + (interpolation1 * ResamplerFilterDifference[filt_ind])));
+//     //         }
+
+//     //         /* Do the right wing! */
+//     //         for (j = 0; (filterindex2 + (j * RESAMPLER_SAMPLES_PER_ZERO_CROSSING)) < RESAMPLER_FILTER_SIZE; j++) {
+//     //             const int filt_ind = filterindex2 + j * RESAMPLER_SAMPLES_PER_ZERO_CROSSING;
+//     //             const int srcframe = srcindex + 1 + j;
+//     //             /* !!! FIXME: we can bubble this conditional out of here by doing a post loop. */
+//     //             const float insample = (srcframe >= inframes) ? rpadding[((srcframe - inframes) * chans) + chan] : inbuf[(srcframe * chans) + chan];
+//     //             outsample += (float)(insample * (ResamplerFilter[filt_ind] + (interpolation2 * ResamplerFilterDifference[filt_ind])));
+//     //         }
+
+//     //         *(dst++) = outsample;
+//     //     }
+//     // }
+
+//     return outframes * chans * sizeof (float);
+// }
 
 int SDL_NumJoysticks(void)
 {
