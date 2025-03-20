@@ -6,6 +6,8 @@
 
 int initialized = 0;
 
+Uint64 start_tick = 0;
+
 /*
     Original SDL2 handler
 */
@@ -17,6 +19,7 @@ extern hacksdl_config_t config;
     Original hooked function
 */
 int (*original_SDL_Init)(Uint32 flags);
+Uint64 (*original_SDL_GetPerformanceCounter)(void);
 int (*original_SDL_NumJoysticks)(void);
 
 // index related functions
@@ -63,6 +66,7 @@ int setup_original_SDL_functions(){
     }
 
     original_SDL_Init = dlsym(sdl_handler, "SDL_Init");
+    original_SDL_GetPerformanceCounter = dlsym(sdl_handler, "SDL_GetPerformanceCounter");
     original_SDL_NumJoysticks = dlsym(sdl_handler, "SDL_NumJoysticks");
     original_SDL_JoystickGetDevicePlayerIndex = dlsym(sdl_handler, "SDL_JoystickGetDevicePlayerIndex");
     original_SDL_JoystickGetDeviceGUID = dlsym(sdl_handler, "SDL_JoystickGetDeviceGUID");
@@ -132,7 +136,17 @@ int SDL_Init(Uint32 flags)
 
     HACKSDL_debug("Hook: flags = %d", flags);
 
-    return original_SDL_Init(flags);
+    int res = original_SDL_Init(flags);
+
+    start_tick = original_SDL_GetPerformanceCounter();
+
+    return res;
+}
+
+Uint64 SDL_GetPerformanceCounter(void) {
+    Uint64 n = original_SDL_GetPerformanceCounter();
+    HACKSDL_debug("SDL_GetPerformanceCounter: %lld", n);
+    return n - start_tick;
 }
 
 int SDL_NumJoysticks(void)
